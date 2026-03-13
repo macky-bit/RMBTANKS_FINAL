@@ -1,6 +1,5 @@
 package com.maraba.rmbtanks;
 
-
 import com.badlogic.gdx.ApplicationAdapter;
 import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.Input.Keys;
@@ -35,22 +34,22 @@ public class RMBTanks extends ApplicationAdapter {
     NetworkManager network = new NetworkManager();
 
     // ── SCREENS ────────────────────────────────────────
-    HomeScreen           homeScreen;
+    HomeScreen            homeScreen;
     MultiplayerMenuScreen multiScreen;
-    WaitingScreen        waitingScreen;
-    SelectionScreen      selectionScreen;
-    GameScreen           gameScreen;
-    InfoScreen           infoScreen;
-    SettingsScreen       settingsScreen;
+    WaitingScreen         waitingScreen;
+    SelectionScreen       selectionScreen;
+    GameScreen            gameScreen;
+    InfoScreen            infoScreen;
+    SettingsScreen        settingsScreen;
 
     // ── SCREEN IDs ─────────────────────────────────────
-    // 0=Home 1=MultiMenu 2=Waiting
-    // 3=Selection 4=Game 5=Info 6=Settings
+    // 0=Home  1=MultiMenu  2=Waiting  3=MultiSelection
+    // 4=MultiGame  5=Info  6=Settings  7=SoloSelection
+    // 8=SoloGame
     int currentScreen = 0;
 
-    // Track which tank was chosen
     int myTankChoice     = 0;
-    int remoteTankChoice = 0; // will sync later
+    int remoteTankChoice = 0;
 
     @Override
     public void create() {
@@ -91,7 +90,7 @@ public class RMBTanks extends ApplicationAdapter {
 
         switch (currentScreen) {
 
-            case 0: // HOME
+            case 0: // ── HOME ───────────────────────────
                 int chosen = homeScreen.update();
                 if (chosen == 0) currentScreen = 7; // SOLO
                 if (chosen == 1) currentScreen = 1; // MULTIPLAYER
@@ -100,27 +99,25 @@ public class RMBTanks extends ApplicationAdapter {
                 homeScreen.draw(batch, shape, V_WIDTH, V_HEIGHT);
                 break;
 
-            case 1: // MULTIPLAYER MENU
+            case 1: // ── MULTIPLAYER MENU ───────────────
                 int result = multiScreen.update();
-                if (result == 1 || result == 2) currentScreen = 2; // WAITING
-                if (result == -1) currentScreen = 0; // BACK
+                if (result == 1 || result == 2) currentScreen = 2;
+                if (result == -1) currentScreen = 0;
                 multiScreen.draw(batch, shape, V_WIDTH, V_HEIGHT);
                 break;
 
-            case 2: // WAITING FOR OPPONENT
-                if (waitingScreen.update()) {
-                    currentScreen = 3; // Go to tank selection
-                }
-                if (!network.connected && Gdx.input.isKeyJustPressed(Keys.ESCAPE)) {
+            case 2: // ── WAITING ────────────────────────
+                if (waitingScreen.update()) currentScreen = 3;
+                if (!network.connected &&
+                    Gdx.input.isKeyJustPressed(Keys.ESCAPE)) {
                     currentScreen = 0;
                 }
                 waitingScreen.draw(batch, shape, V_WIDTH, V_HEIGHT);
                 break;
 
-            case 3: // TANK SELECTION
+            case 3: // ── MULTI TANK SELECTION ───────────
                 if (selectionScreen.update()) {
-                    myTankChoice = selectionScreen.getSelectedTank();
-                    // For now remote uses different tank
+                    myTankChoice     = selectionScreen.getSelectedTank();
                     remoteTankChoice = (myTankChoice + 1) % 3;
                     gameScreen = new GameScreen(
                         getTank(myTankChoice),
@@ -134,9 +131,15 @@ public class RMBTanks extends ApplicationAdapter {
                 selectionScreen.draw(batch, shape, V_WIDTH, V_HEIGHT);
                 break;
 
-            case 4: // GAME
+            case 4: // ── MULTIPLAYER GAME ───────────────
                 gameScreen.update();
                 gameScreen.draw(batch, shape);
+                if (gameScreen.isPaused()) {
+                    int pr = gameScreen.updatePause();
+                    if (pr == 0) gameScreen.resume();
+                    if (pr == 1) { network.disconnect(); currentScreen = 0; }
+                    if (pr == 2) Gdx.app.exit();
+                }
                 if (gameScreen.isMatchOver() &&
                     Gdx.input.isKeyJustPressed(Keys.ESCAPE)) {
                     network.disconnect();
@@ -144,24 +147,24 @@ public class RMBTanks extends ApplicationAdapter {
                 }
                 break;
 
-            case 5: // INFO
+            case 5: // ── INFO ───────────────────────────
                 if (infoScreen.update()) currentScreen = 0;
                 infoScreen.draw(batch, shape, V_WIDTH, V_HEIGHT);
                 break;
 
-            case 6: // SETTINGS
+            case 6: // ── SETTINGS ───────────────────────
                 if (settingsScreen.update()) currentScreen = 0;
                 settingsScreen.draw(batch, shape, V_WIDTH, V_HEIGHT);
                 break;
 
-            case 7: // SOLO TANK SELECTION
+            case 7: // ── SOLO TANK SELECTION ────────────
                 if (selectionScreen.update()) {
                     myTankChoice = selectionScreen.getSelectedTank();
                     gameScreen = new GameScreen(
                         getTank(myTankChoice),
-                        null,           // no remote tank
+                        null,
                         bulletTexture,
-                        null,           // no network
+                        null,
                         V_WIDTH, V_HEIGHT
                     );
                     currentScreen = 8;
@@ -169,11 +172,14 @@ public class RMBTanks extends ApplicationAdapter {
                 selectionScreen.draw(batch, shape, V_WIDTH, V_HEIGHT);
                 break;
 
-            case 8: // SOLO GAME
+            case 8: // ── SOLO GAME ──────────────────────
                 gameScreen.update();
                 gameScreen.draw(batch, shape);
-                if (Gdx.input.isKeyJustPressed(Keys.ESCAPE)) {
-                    currentScreen = 0;
+                if (gameScreen.isPaused()) {
+                    int pr = gameScreen.updatePause();
+                    if (pr == 0) gameScreen.resume();
+                    if (pr == 1) currentScreen = 0;
+                    if (pr == 2) Gdx.app.exit();
                 }
                 break;
         }
