@@ -5,6 +5,8 @@ import com.badlogic.gdx.Input.Keys;
 import com.badlogic.gdx.graphics.Texture;
 import com.badlogic.gdx.graphics.g2d.SpriteBatch;
 import com.badlogic.gdx.graphics.glutils.ShapeRenderer;
+import com.badlogic.gdx.math.Rectangle;
+import com.maraba.rmbtanks.Sound.SoundManager;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -13,18 +15,25 @@ public class Player {
     public float x, y;
     public float angle = 90f;
 
-    static final float SPEED      = 150f;
-    static final float TURN_SPEED = 120f;
+    static final float SPEED       = 150f;
+    static final float TURN_SPEED  = 120f;
     static final float SHOOT_DELAY = 0.4f;
 
-    public static final int DRAW_W = 35;
-    public static final int DRAW_H = 65;
+    public static final int DRAW_W = 55;
+    public static final int DRAW_H = 95;
 
     private Texture texture;
     private Texture bulletTexture;
     private float shootCooldown = 0f;
     private List<Bullet> bullets = new ArrayList<>();
     private ParticleSystem particles = new ParticleSystem();
+    private SoundManager sound;
+
+    // ── OBSTACLE RECTANGLES ────────────────────────────
+    private List<Rectangle> obstacles;
+
+    // ── JUST FIRED FLAG ────────────────────────────────
+    private boolean justFired = false;
 
     // ── HEALTH ─────────────────────────────────────────
     public int health    = 100;
@@ -38,9 +47,9 @@ public class Player {
         public float angle;
         public boolean active = true;
 
-        static final int BW = 6;   // bullet draw width
-        static final int BH = 16;  // bullet draw height
-        static final float SPEED = 400f;
+        static final int   BW    = 6;
+        static final int   BH    = 16;
+        static final float SPEED = 1000f;
 
         public Bullet(float x, float y, float angle) {
             this.x     = x;
@@ -61,12 +70,12 @@ public class Player {
         public void draw(SpriteBatch batch, Texture tex) {
             batch.draw(
                 tex,
-                x - BW / 2f, y - BH / 2f,  // position
-                BW / 2f, BH / 2f,            // origin (center)
-                BW, BH,                       // size
-                1f, 1f,                       // scale
-                angle - 90f,                  // rotation
-                0, 0,                         // src x, y
+                x - BW / 2f, y - BH / 2f,
+                BW / 2f, BH / 2f,
+                BW, BH,
+                1f, 1f,
+                angle - 90f,
+                0, 0,
                 tex.getWidth(),
                 tex.getHeight(),
                 false, false
@@ -76,30 +85,67 @@ public class Player {
 
     // ── CONSTRUCTOR ────────────────────────────────────
     public Player(Texture texture, Texture bulletTexture,
-                  float startX, float startY) {
+                  float startX, float startY, SoundManager sound) {
         this.texture       = texture;
         this.bulletTexture = bulletTexture;
         this.x             = startX;
         this.y             = startY;
+        this.sound         = sound;
+    }
+
+    // ── SET OBSTACLES ──────────────────────────────────
+    public void setObstacles(List<Rectangle> obstacles) {
+        this.obstacles = obstacles;
+    }
+
+    // ── JUST FIRED — read once then auto-reset ─────────
+    public boolean isJustFired() {
+        boolean f = justFired;
+        justFired = false;
+        return f;
+    }
+
+    // ── COLLISION CHECK ────────────────────────────────
+    private boolean collidesWithObstacle(float nx, float ny) {
+        if (obstacles == null) return false;
+        Rectangle tankBox = new Rectangle(nx, ny, DRAW_W, DRAW_H);
+        for (Rectangle obs : obstacles) {
+            if (tankBox.overlaps(obs)) return true;
+        }
+        return false;
     }
 
     // ── UPDATE ─────────────────────────────────────────
     public void update(float delta, int screenW, int screenH) {
 
-        // ── MOVEMENT ───────────────────────────────────
+        // ── ROTATION ───────────────────────────────────
         if (Gdx.input.isKeyPressed(Keys.LEFT)) {
             angle += TURN_SPEED * delta;
         }
         if (Gdx.input.isKeyPressed(Keys.RIGHT)) {
             angle -= TURN_SPEED * delta;
         }
+
+        // ── MOVEMENT WITH COLLISION ────────────────────
+        float dx = 0, dy = 0;
+
         if (Gdx.input.isKeyPressed(Keys.UP)) {
-            x += (float) Math.cos(Math.toRadians(angle)) * SPEED * delta;
-            y += (float) Math.sin(Math.toRadians(angle)) * SPEED * delta;
+            dx += (float) Math.cos(Math.toRadians(angle)) * SPEED * delta;
+            dy += (float) Math.sin(Math.toRadians(angle)) * SPEED * delta;
         }
         if (Gdx.input.isKeyPressed(Keys.DOWN)) {
-            x -= (float) Math.cos(Math.toRadians(angle)) * SPEED * delta;
-            y -= (float) Math.sin(Math.toRadians(angle)) * SPEED * delta;
+            dx -= (float) Math.cos(Math.toRadians(angle)) * SPEED * delta;
+            dy -= (float) Math.sin(Math.toRadians(angle)) * SPEED * delta;
+        }
+
+        // Try X movement independently
+        if (!collidesWithObstacle(x + dx, y)) {
+            x += dx;
+        }
+
+        // Try Y movement independently
+        if (!collidesWithObstacle(x, y + dy)) {
+            y += dy;
         }
 
         // ── KEEP INSIDE SCREEN ─────────────────────────
@@ -107,21 +153,43 @@ public class Player {
         y = Math.max(0, Math.min(screenH - DRAW_H, y));
 
         // ── WHEEL SMOKE ────────────────────────────────
-        if (Gdx.input.isKeyPressed(Keys.UP) ||
-            Gdx.input.isKeyPressed(Keys.DOWN)) {
+        boolean movingForward = Gdx.input.isKeyPressed(Keys.UP) ||
+            Gdx.input.isKeyPressed(Keys.DOWN);
+        if (movingForward) {
             particles.emitWheelSmoke(x, y, DRAW_W, DRAW_H, angle);
         }
 
-        // ── SHOOTING + MUZZLE SMOKE ────────────────────
+        // ── TANK ENGINE SOUND ──────────────────────────
+        if (sound != null) {
+            boolean anyMovement = movingForward ||
+                Gdx.input.isKeyPressed(Keys.LEFT) ||
+                Gdx.input.isKeyPressed(Keys.RIGHT);
+            sound.updateTankSound(anyMovement, delta);
+        }
+
+        // ── SHOOT COOLDOWN ─────────────────────────────
         shootCooldown -= delta;
-        if (Gdx.input.isKeyJustPressed(Keys.SPACE) && shootCooldown <= 0f) {
+
+        // ── SHOOTING + MUZZLE SMOKE ────────────────────
+        if (Gdx.input.isKeyJustPressed(Keys.SPACE)
+            && shootCooldown <= 0f) {
             float barrelX = x + DRAW_W / 2f
                 + (float) Math.cos(Math.toRadians(angle)) * (DRAW_H / 2f);
             float barrelY = y + DRAW_H / 2f
                 + (float) Math.sin(Math.toRadians(angle)) * (DRAW_H / 2f);
+
             bullets.add(new Bullet(barrelX, barrelY, angle));
             particles.emitMuzzleSmoke(barrelX, barrelY, angle);
-            shootCooldown = SHOOT_DELAY;
+
+            // ── SET JUST FIRED FLAG ─────────────────────
+            justFired = true;
+
+            if (sound != null) {
+                float duration = sound.playFireSound();
+                shootCooldown = duration > 0 ? duration : SHOOT_DELAY;
+            } else {
+                shootCooldown = 4f;
+            }
         }
 
         // ── UPDATE BULLETS ─────────────────────────────
@@ -138,7 +206,6 @@ public class Player {
 
     // ── DRAW ───────────────────────────────────────────
     public void draw(SpriteBatch batch) {
-        // Draw tank
         batch.draw(
             texture,
             x, y,
@@ -152,16 +219,12 @@ public class Player {
             false, false
         );
 
-        // Draw bullets
         for (Bullet b : bullets) {
             b.draw(batch, bulletTexture);
         }
-
     }
 
-    public List<Bullet> getBullets() {
-        return bullets;
-    }
+    public List<Bullet> getBullets() { return bullets; }
 
     public void drawParticles(ShapeRenderer shape) {
         particles.draw(shape);
@@ -176,28 +239,24 @@ public class Player {
         float barY    = y + DRAW_H + 8f;
         float percent = (float) health / maxHealth;
 
-        // Background (dark red)
         shape.setColor(0.4f, 0.0f, 0.0f, 1f);
         shape.rect(barX, barY, barW, barH);
 
-        // Health fill color
-        if (percent > 0.5f) {
-            shape.setColor(0.2f, 0.85f, 0.2f, 1f); // green
-        } else if (percent > 0.25f) {
-            shape.setColor(1f, 0.85f, 0.0f, 1f);   // yellow
-        } else {
-            shape.setColor(1f, 0.2f, 0.2f, 1f);    // red
-        }
+        if      (percent > 0.5f)  shape.setColor(0.2f, 0.85f, 0.2f, 1f);
+        else if (percent > 0.25f) shape.setColor(1f,   0.85f, 0.0f, 1f);
+        else                      shape.setColor(1f,   0.2f,  0.2f, 1f);
 
-        // Filled portion
         shape.rect(barX, barY, barW * percent, barH);
 
-        // Border
         shape.setColor(1f, 1f, 1f, 0.6f);
-        shape.rectLine(barX, barY, barX + barW, barY, 1f);
-        shape.rectLine(barX, barY + barH, barX + barW, barY + barH, 1f);
-        shape.rectLine(barX, barY, barX, barY + barH, 1f);
-        shape.rectLine(barX + barW, barY, barX + barW, barY + barH, 1f);
+        shape.rectLine(barX,        barY,
+            barX + barW, barY,        1f);
+        shape.rectLine(barX,        barY + barH,
+            barX + barW, barY + barH, 1f);
+        shape.rectLine(barX,        barY,
+            barX,        barY + barH, 1f);
+        shape.rectLine(barX + barW, barY,
+            barX + barW, barY + barH, 1f);
     }
 
     public void takeDamage(int amount) {
@@ -207,5 +266,4 @@ public class Player {
             alive  = false;
         }
     }
-
 }

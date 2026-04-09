@@ -1,4 +1,4 @@
-package com.maraba.rmbtanks.screens;
+package com.maraba.rmbtanks.screens.HomeScreens;
 
 import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.Input.Keys;
