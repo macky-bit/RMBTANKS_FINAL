@@ -119,7 +119,6 @@ public class GameScreen {
         mapRenderer  = new OrthogonalTiledMapRenderer(map, mapScale);
 
         // ── SPAWN POSITIONS ────────────────────────────
-        // Player 1 — top-left safe zone
         spawnX = 60f;
         spawnY = screenH - Player.DRAW_H - 60f;
         player = new Player(myTankTexture, bulletTexture,
@@ -212,11 +211,13 @@ public class GameScreen {
         // ── NETWORK ────────────────────────────────────
         if (network != null) {
 
-            // ── SEND STATE ─────────────────────────────
+            // ── BUILD PACKET ───────────────────────────
             GamePacket packet = new GamePacket(
                 player.x, player.y, player.angle,
                 player.health, myKills, respawnTimer
             );
+
+            // ── FIRED BULLET FLAG ──────────────────────
             if (player.isJustFired() &&
                 !player.getBullets().isEmpty()) {
                 Player.Bullet last = player.getBullets()
@@ -226,6 +227,25 @@ public class GameScreen {
                 packet.bulletY     = last.y;
                 packet.bulletAngle = last.angle;
             }
+
+            // ── HIT DETECTION ──────────────────────────
+            // Check MY bullets hitting REMOTE tank
+            // Send hit count so remote can reduce its own health
+            int hitsThisFrame = 0;
+            if (remoteAlive) {
+                Rectangle remoteBox = new Rectangle(
+                    remoteX, remoteY,
+                    Player.DRAW_W, Player.DRAW_H);
+                for (Player.Bullet b : player.getBullets()) {
+                    if (b.active && remoteBox.contains(b.x, b.y)) {
+                        b.active = false;
+                        hitsThisFrame++;
+                    }
+                }
+            }
+            packet.hitCount = hitsThisFrame;
+
+            // Send packet
             network.send(packet);
 
             // ── RECEIVE STATE ──────────────────────────
@@ -236,12 +256,25 @@ public class GameScreen {
                 remoteAngle = received.angle;
                 remoteKills = received.kills;
 
-                // ── HEALTH + KILL TRACKING ─────────────
+                // ── APPLY INCOMING HITS TO LOCAL PLAYER ─
+                // Remote PC detected its bullets hit us
+                // and sent hitCount — we apply damage here
+                if (received.hitCount > 0 && player.alive) {
+                    player.health -= BULLET_DAMAGE * received.hitCount;
+                    if (player.health <= 0) {
+                        player.health = 0;
+                        player.alive  = false;
+                        respawnTimer  = RESPAWN_TIME;
+                    }
+                }
+
+                // ── SYNC REMOTE HEALTH ─────────────────
+                // Also trust remote health from packet
+                // as secondary sync
                 int prevHealth = remoteHealth;
                 remoteHealth   = received.health;
 
-                // Count kill only when remote health
-                // transitions from alive to dead
+                // Count kill when remote dies
                 if (prevHealth > 0 && remoteHealth <= 0) {
                     myKills++;
                 }
@@ -251,10 +284,10 @@ public class GameScreen {
                     remoteAlive = true;
                 }
 
-                // Sync alive state from health
+                // Sync alive from health
                 remoteAlive = remoteHealth > 0;
 
-                // ── REMOTE BULLET SPAWN ────────────────
+                // ── SPAWN REMOTE BULLET ────────────────
                 if (received.firedBullet) {
                     remoteBullets.add(new RemoteBullet(
                         received.bulletX,
@@ -274,46 +307,14 @@ public class GameScreen {
                 remoteAngle, lerpSpeed * delta);
 
             // ── UPDATE REMOTE BULLETS ──────────────────
+            // Visual only — damage handled by hitCount above
             Iterator<RemoteBullet> it = remoteBullets.iterator();
             while (it.hasNext()) {
                 RemoteBullet rb = it.next();
                 rb.update(delta);
-
-                // Remove if out of bounds
                 if (rb.x < 0 || rb.x > screenW ||
                     rb.y < 0 || rb.y > screenH) {
                     it.remove();
-                    continue;
-                }
-
-                // Remote bullets damage local player
-                if (player.alive) {
-                    Rectangle myBox = new Rectangle(
-                        player.x, player.y,
-                        Player.DRAW_W, Player.DRAW_H);
-                    if (myBox.contains(rb.x, rb.y)) {
-                        it.remove();
-                        player.health -= BULLET_DAMAGE;
-                        if (player.health <= 0) {
-                            player.health = 0;
-                            player.alive  = false;
-                            respawnTimer  = RESPAWN_TIME;
-                        }
-                    }
-                }
-            }
-
-            // ── MY BULLETS HIT REMOTE ─────────────────
-            // Deactivate bullet on hit
-            // Kills tracked via health packet above
-            if (remoteAlive) {
-                Rectangle remoteBox = new Rectangle(
-                    remoteX, remoteY,
-                    Player.DRAW_W, Player.DRAW_H);
-                for (Player.Bullet b : player.getBullets()) {
-                    if (b.active && remoteBox.contains(b.x, b.y)) {
-                        b.active = false;
-                    }
                 }
             }
         }
@@ -324,9 +325,8 @@ public class GameScreen {
         player.health = 100;
         player.alive  = true;
         respawnTimer  = RESPAWN_TIME;
-        // Return to top-left spawn
-        player.x = spawnX;
-        player.y = spawnY;
+        player.x      = spawnX;
+        player.y      = spawnY;
     }
 
     // ── END MATCH ──────────────────────────────────────
@@ -365,7 +365,7 @@ public class GameScreen {
         // ── PARTICLES ──────────────────────────────────
         player.drawParticles(shape);
 
-        // ── REMOTE BULLETS ─────────────────────────────
+        // ── REMOTE BULLETS — visual only ───────────────
         if (network != null && !remoteBullets.isEmpty()) {
             shape.begin(ShapeRenderer.ShapeType.Filled);
             shape.setColor(1f, 0.3f, 0.1f, 1f);
