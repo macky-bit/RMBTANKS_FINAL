@@ -13,22 +13,24 @@ public class GamePacket implements Serializable {
     public boolean firedBullet;
     public float   bulletX, bulletY, bulletAngle;
 
-    // ── HIT COUNT ──────────────────────────────────────
-    // How many times this packet sender hit the opponent
-    // Receiver uses this to reduce its own health
-    public int hitCount = 0;
+    // ── HIT SYSTEM ─────────────────────────────────────
+    // Cumulative hits I dealt to opponent
+    public int hitCount      = 0;
+    // Echo back — how many hits I have received so far
+    public int confirmedHits = 0;
 
     public GamePacket() {}
 
     public GamePacket(float x, float y, float angle,
                       int health, int kills, float respawnTimer) {
-        this.x            = x;
-        this.y            = y;
-        this.angle        = angle;
-        this.health       = health;
-        this.kills        = kills;
-        this.respawnTimer = respawnTimer;
-        this.firedBullet  = false;
-        this.hitCount     = 0;
+        this.x             = x;
+        this.y             = y;
+        this.angle         = angle;
+        this.health        = health;
+        this.kills         = kills;
+        this.respawnTimer  = respawnTimer;
+        this.firedBullet   = false;
+        this.hitCount      = 0;
+        this.confirmedHits = 0;
     }
 }

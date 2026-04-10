@@ -52,6 +52,11 @@ public class GameScreen {
     // ── OBSTACLE RECTANGLES ────────────────────────────
     private List<Rectangle> obstacles = new ArrayList<>();
 
+    // ── HIT TRACKING ───────────────────────────────────
+    private int pendingHits       = 0;
+    private int lastSentHits      = 0;
+    private int totalHitsReceived = 0;
+
     // ── MATCH STATE ────────────────────────────────────
     private float   matchTimer   = MATCH_TIME;
     private float   respawnTimer = 0f;
@@ -228,24 +233,24 @@ public class GameScreen {
                 packet.bulletAngle = last.angle;
             }
 
-            // ── HIT DETECTION ──────────────────────────
-            // Check MY bullets hitting REMOTE tank
-            // Send hit count so remote can reduce its own health
-            int hitsThisFrame = 0;
+            // ── DETECT HITS ────────────────────────────
             if (remoteAlive) {
                 Rectangle remoteBox = new Rectangle(
                     remoteX, remoteY,
                     Player.DRAW_W, Player.DRAW_H);
                 for (Player.Bullet b : player.getBullets()) {
-                    if (b.active && remoteBox.contains(b.x, b.y)) {
+                    if (b.active &&
+                        remoteBox.contains(b.x, b.y)) {
                         b.active = false;
-                        hitsThisFrame++;
+                        pendingHits++;
+                        myKills++;
                     }
                 }
             }
-            packet.hitCount = hitsThisFrame;
 
-            // Send packet
+            // Send cumulative hits — resends until confirmed
+            packet.hitCount      = pendingHits;
+            packet.confirmedHits = totalHitsReceived;
             network.send(packet);
 
             // ── RECEIVE STATE ──────────────────────────
@@ -256,11 +261,15 @@ public class GameScreen {
                 remoteAngle = received.angle;
                 remoteKills = received.kills;
 
-                // ── APPLY INCOMING HITS TO LOCAL PLAYER ─
-                // Remote PC detected its bullets hit us
-                // and sent hitCount — we apply damage here
-                if (received.hitCount > 0 && player.alive) {
-                    player.health -= BULLET_DAMAGE * received.hitCount;
+                // ── APPLY INCOMING HITS ────────────────
+                // Only apply NEW hits not yet processed
+                if (received.hitCount > lastSentHits
+                    && player.alive) {
+                    int newHits  = received.hitCount
+                        - lastSentHits;
+                    lastSentHits      = received.hitCount;
+                    totalHitsReceived = lastSentHits;
+                    player.health    -= BULLET_DAMAGE * newHits;
                     if (player.health <= 0) {
                         player.health = 0;
                         player.alive  = false;
@@ -268,23 +277,23 @@ public class GameScreen {
                     }
                 }
 
+                // ── CONFIRM OUR HITS RECEIVED ──────────
+                if (received.confirmedHits >= pendingHits) {
+                    pendingHits = 0;
+                }
+
                 // ── SYNC REMOTE HEALTH ─────────────────
-                // Also trust remote health from packet
-                // as secondary sync
                 int prevHealth = remoteHealth;
                 remoteHealth   = received.health;
 
-                // Count kill when remote dies
-                if (prevHealth > 0 && remoteHealth <= 0) {
-                    myKills++;
-                }
-
-                // Detect remote respawn
+                // Detect remote respawn — reset tracking
                 if (prevHealth <= 0 && remoteHealth > 0) {
-                    remoteAlive = true;
+                    remoteAlive       = true;
+                    lastSentHits      = 0;
+                    totalHitsReceived = 0;
+                    pendingHits       = 0;
                 }
 
-                // Sync alive from health
                 remoteAlive = remoteHealth > 0;
 
                 // ── SPAWN REMOTE BULLET ────────────────
@@ -299,15 +308,14 @@ public class GameScreen {
 
             // ── SMOOTH REMOTE POSITION ─────────────────
             float lerpSpeed = 12f;
-            smoothRemoteX     = lerp(smoothRemoteX, remoteX,
-                lerpSpeed * delta);
-            smoothRemoteY     = lerp(smoothRemoteY, remoteY,
-                lerpSpeed * delta);
+            smoothRemoteX     = lerp(smoothRemoteX,
+                remoteX, lerpSpeed * delta);
+            smoothRemoteY     = lerp(smoothRemoteY,
+                remoteY, lerpSpeed * delta);
             smoothRemoteAngle = lerpAngle(smoothRemoteAngle,
                 remoteAngle, lerpSpeed * delta);
 
-            // ── UPDATE REMOTE BULLETS ──────────────────
-            // Visual only — damage handled by hitCount above
+            // ── UPDATE REMOTE BULLETS — visual only ────
             Iterator<RemoteBullet> it = remoteBullets.iterator();
             while (it.hasNext()) {
                 RemoteBullet rb = it.next();
@@ -384,7 +392,9 @@ public class GameScreen {
         // ── TANKS + BULLETS ────────────────────────────
         batch.begin();
         if (player.alive) player.draw(batch);
-        if (network != null && remoteAlive)
+        // Bug 1 fix: guard null remoteTankTexture
+        if (network != null && remoteAlive
+            && remoteTankTexture != null)
             drawRemoteTank(batch);
         batch.end();
 
