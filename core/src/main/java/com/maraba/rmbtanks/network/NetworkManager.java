@@ -19,7 +19,7 @@ public class NetworkManager {
     private GamePacket latestPacket = null;
     private final Object lock = new Object();
 
-    // ── HOST ───────────────────────────────────────────
+    // ── HOST
     public void startHost() {
         isHost    = true;
         statusMsg = "Waiting for player to join...";
@@ -38,7 +38,7 @@ public class NetworkManager {
         }).start();
     }
 
-    // ── JOIN ───────────────────────────────────────────
+    // ── JOIN
     public void startClient(String hostIP) {
         isHost    = false;
         statusMsg = "Connecting to " + hostIP + "...";
@@ -56,13 +56,13 @@ public class NetworkManager {
         }).start();
     }
 
-    // ── SETUP ──────────────────────────────────────────
+    // ── SETUP
     private void setupStreams() throws Exception {
         out = new ObjectOutputStream(socket.getOutputStream());
         in  = new ObjectInputStream(socket.getInputStream());
     }
 
-    // ── SEND ───────────────────────────────────────────
+    // ── SEND
     public void send(GamePacket packet) {
         if (!connected) return;
         try {
@@ -75,7 +75,7 @@ public class NetworkManager {
         }
     }
 
-    // ── RECEIVE ────────────────────────────────────────
+    // ── RECEIVE
     private void startReceiving() {
         new Thread(() -> {
             while (connected) {
@@ -93,7 +93,7 @@ public class NetworkManager {
         }).start();
     }
 
-    // ── GET LATEST ─────────────────────────────────────
+    // ── GET LATEST
     public GamePacket getLatestPacket() {
         synchronized (lock) {
             GamePacket p = latestPacket;
@@ -102,7 +102,7 @@ public class NetworkManager {
         }
     }
 
-    // ── DISCONNECT ─────────────────────────────────────
+    // ── DISCONNECT
     public void disconnect() {
         connected = false;
         try {
@@ -113,7 +113,7 @@ public class NetworkManager {
         }
     }
 
-    // ── GET LOCAL IP ───────────────────────────────────
+    // ── GET LOCAL IP
     public String getLocalIP() {
         try {
             return InetAddress.getLocalHost().getHostAddress();

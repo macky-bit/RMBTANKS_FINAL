@@ -39,17 +39,14 @@ public class GameScreen {
     private NetworkManager network;
 
     // ── REMOTE PLAYER ──────────────────────────────────
-    // Raw received values
-    private float remoteX, remoteY, remoteAngle;
-    // Smoothed display values
-    private float smoothRemoteX, smoothRemoteY, smoothRemoteAngle;
+    private float   remoteX, remoteY, remoteAngle;
+    private float   smoothRemoteX, smoothRemoteY, smoothRemoteAngle;
     private int     remoteHealth = 100;
     private int     remoteKills  = 0;
     private boolean remoteAlive  = true;
     private Texture remoteTankTexture;
 
     // ── REMOTE BULLETS ─────────────────────────────────
-    // Stores ALL bullets received, each with own vx/vy
     private List<RemoteBullet> remoteBullets = new ArrayList<>();
 
     // ── OBSTACLE RECTANGLES ────────────────────────────
@@ -81,23 +78,19 @@ public class GameScreen {
     private GlyphLayout layout;
 
     // ── REMOTE BULLET CLASS ────────────────────────────
-    // Fix 1 & 2: uses vx/vy pre-calculated, stores ALL bullets
     static class RemoteBullet {
         float x, y, vx, vy;
         boolean active = true;
-        // Match Player.Bullet speed exactly
         static final float SPEED = 1000f;
 
         RemoteBullet(float x, float y, float angle) {
             this.x  = x;
             this.y  = y;
-            // Fix 1: use cos/sin matching Player.Bullet exactly
             this.vx = (float) Math.cos(Math.toRadians(angle)) * SPEED;
             this.vy = (float) Math.sin(Math.toRadians(angle)) * SPEED;
         }
 
         void update(float delta) {
-            // Fix 1: simple vx/vy — correct direction every time
             x += vx * delta;
             y += vy * delta;
         }
@@ -126,6 +119,7 @@ public class GameScreen {
         mapRenderer  = new OrthogonalTiledMapRenderer(map, mapScale);
 
         // ── SPAWN POSITIONS ────────────────────────────
+        // Player 1 — top-left safe zone
         spawnX = 60f;
         spawnY = screenH - Player.DRAW_H - 60f;
         player = new Player(myTankTexture, bulletTexture,
@@ -172,6 +166,18 @@ public class GameScreen {
     public void    resume()      { paused = false; }
     public int     updatePause() { return pauseScreen.update(); }
 
+    // ── LERP HELPERS ───────────────────────────────────
+    private float lerp(float a, float b, float t) {
+        return a + (b - a) * Math.min(t, 1f);
+    }
+
+    private float lerpAngle(float a, float b, float t) {
+        float diff = b - a;
+        while (diff >  180f) diff -= 360f;
+        while (diff < -180f) diff += 360f;
+        return a + diff * Math.min(t, 1f);
+    }
+
     // ── UPDATE ─────────────────────────────────────────
     public void update() {
         float delta = Gdx.graphics.getDeltaTime();
@@ -183,6 +189,7 @@ public class GameScreen {
 
         if (paused || matchOver) return;
 
+        // ── MATCH TIMER ────────────────────────────────
         if (network != null) {
             matchTimer -= delta;
             if (matchTimer <= 0) {
@@ -192,18 +199,20 @@ public class GameScreen {
             }
         }
 
+        // ── RESPAWN COUNTDOWN ──────────────────────────
         if (!player.alive) {
             respawnTimer -= delta;
             if (respawnTimer <= 0) respawnPlayer();
             return;
         }
 
+        // ── LOCAL PLAYER UPDATE ────────────────────────
         player.update(delta, screenW, screenH);
 
+        // ── NETWORK ────────────────────────────────────
         if (network != null) {
 
             // ── SEND STATE ─────────────────────────────
-            // Fix 2: send ALL new bullets using isJustFired()
             GamePacket packet = new GamePacket(
                 player.x, player.y, player.angle,
                 player.health, myKills, respawnTimer
@@ -222,26 +231,30 @@ public class GameScreen {
             // ── RECEIVE STATE ──────────────────────────
             GamePacket received = network.getLatestPacket();
             if (received != null) {
-
-                // Raw position update
                 remoteX     = received.x;
                 remoteY     = received.y;
                 remoteAngle = received.angle;
                 remoteKills = received.kills;
 
-                // Fix 3: trust remote health from packet
-                // Remote PC manages its own health
+                // ── HEALTH + KILL TRACKING ─────────────
                 int prevHealth = remoteHealth;
                 remoteHealth   = received.health;
+
+                // Count kill only when remote health
+                // transitions from alive to dead
+                if (prevHealth > 0 && remoteHealth <= 0) {
+                    myKills++;
+                }
 
                 // Detect remote respawn
                 if (prevHealth <= 0 && remoteHealth > 0) {
                     remoteAlive = true;
                 }
+
+                // Sync alive state from health
                 remoteAlive = remoteHealth > 0;
 
-                // Fix 2: spawn remote bullet only on
-                // firedBullet flag — each packet = one bullet
+                // ── REMOTE BULLET SPAWN ────────────────
                 if (received.firedBullet) {
                     remoteBullets.add(new RemoteBullet(
                         received.bulletX,
@@ -251,14 +264,14 @@ public class GameScreen {
                 }
             }
 
-            // Fix 4: smooth remote position with lerp
+            // ── SMOOTH REMOTE POSITION ─────────────────
             float lerpSpeed = 12f;
-            smoothRemoteX = lerp(smoothRemoteX, remoteX,
+            smoothRemoteX     = lerp(smoothRemoteX, remoteX,
                 lerpSpeed * delta);
-            smoothRemoteY = lerp(smoothRemoteY, remoteY,
+            smoothRemoteY     = lerp(smoothRemoteY, remoteY,
                 lerpSpeed * delta);
-            smoothRemoteAngle = lerpAngle(
-                smoothRemoteAngle, remoteAngle, lerpSpeed * delta);
+            smoothRemoteAngle = lerpAngle(smoothRemoteAngle,
+                remoteAngle, lerpSpeed * delta);
 
             // ── UPDATE REMOTE BULLETS ──────────────────
             Iterator<RemoteBullet> it = remoteBullets.iterator();
@@ -273,8 +286,7 @@ public class GameScreen {
                     continue;
                 }
 
-                // Fix 3: remote bullets hit local player
-                // Local PC decides its own damage
+                // Remote bullets damage local player
                 if (player.alive) {
                     Rectangle myBox = new Rectangle(
                         player.x, player.y,
@@ -291,9 +303,9 @@ public class GameScreen {
                 }
             }
 
-            // Fix 3: MY bullets hitting remote —
-            // we track this locally for kill count display
-            // but remote PC also tracks its own health
+            // ── MY BULLETS HIT REMOTE ─────────────────
+            // Deactivate bullet on hit
+            // Kills tracked via health packet above
             if (remoteAlive) {
                 Rectangle remoteBox = new Rectangle(
                     remoteX, remoteY,
@@ -301,27 +313,10 @@ public class GameScreen {
                 for (Player.Bullet b : player.getBullets()) {
                     if (b.active && remoteBox.contains(b.x, b.y)) {
                         b.active = false;
-                        // Don't modify remoteHealth here —
-                        // remote PC manages its own health
-                        // We only track kills for display
-                        myKills++;
                     }
                 }
             }
         }
-    }
-
-    // ── LERP HELPERS ───────────────────────────────────
-    private float lerp(float a, float b, float t) {
-        return a + (b - a) * Math.min(t, 1f);
-    }
-
-    // Angle lerp that handles 360/0 wraparound
-    private float lerpAngle(float a, float b, float t) {
-        float diff = b - a;
-        while (diff > 180f)  diff -= 360f;
-        while (diff < -180f) diff += 360f;
-        return a + diff * Math.min(t, 1f);
     }
 
     // ── RESPAWN ────────────────────────────────────────
@@ -329,8 +324,9 @@ public class GameScreen {
         player.health = 100;
         player.alive  = true;
         respawnTimer  = RESPAWN_TIME;
-        player.x      = spawnX;
-        player.y      = spawnY;
+        // Return to top-left spawn
+        player.x = spawnX;
+        player.y = spawnY;
     }
 
     // ── END MATCH ──────────────────────────────────────
@@ -386,7 +382,6 @@ public class GameScreen {
         shape.end();
 
         // ── TANKS + BULLETS ────────────────────────────
-        // Fix 4: use smoothed position for remote tank
         batch.begin();
         if (player.alive) player.draw(batch);
         if (network != null && remoteAlive)
@@ -408,7 +403,6 @@ public class GameScreen {
     }
 
     // ── DRAW HELPERS ───────────────────────────────────
-    // Fix 4: draw using smoothed position and angle
     void drawRemoteTank(SpriteBatch batch) {
         batch.draw(
             remoteTankTexture,
@@ -427,7 +421,6 @@ public class GameScreen {
     void drawRemoteHealthBar(ShapeRenderer shape) {
         float barW    = 50f;
         float barH    = 6f;
-        // Fix 4: health bar follows smoothed position
         float barX    = smoothRemoteX + (Player.DRAW_W - barW) / 2f;
         float barY    = smoothRemoteY + Player.DRAW_H + 8f;
         float percent = remoteHealth / 100f;
