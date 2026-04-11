@@ -124,8 +124,16 @@ public class GameScreen {
         mapRenderer  = new OrthogonalTiledMapRenderer(map, mapScale);
 
         // ── SPAWN POSITIONS ────────────────────────────
-        spawnX = 60f;
-        spawnY = screenH - Player.DRAW_H - 60f;
+        // Host = top-left, Client = bottom-right
+        if (network != null && !network.isHost) {
+            // Client — bottom-right
+            spawnX = screenW - Player.DRAW_W - 60f;
+            spawnY = 60f;
+        } else {
+            // Host or Solo — top-left
+            spawnX = 60f;
+            spawnY = screenH - Player.DRAW_H - 60f;
+        }
         player = new Player(myTankTexture, bulletTexture,
             spawnX, spawnY, sound);
 
@@ -155,9 +163,17 @@ public class GameScreen {
             Gdx.app.error("OBSTACLES", "Error: " + e.getMessage());
         }
 
-        // Player 2 — bottom-right safe zone
-        remoteX       = screenW - Player.DRAW_W - 60f;
-        remoteY       = 60f;
+        // ── REMOTE INITIAL POSITION ────────────────────
+        // Remote starts at opposite corner from local
+        if (network != null && !network.isHost) {
+            // Client's remote = Host = top-left
+            remoteX = 60f;
+            remoteY = screenH - Player.DRAW_H - 60f;
+        } else {
+            // Host's remote = Client = bottom-right
+            remoteX = screenW - Player.DRAW_W - 60f;
+            remoteY = 60f;
+        }
         smoothRemoteX = remoteX;
         smoothRemoteY = remoteY;
 
@@ -256,22 +272,28 @@ public class GameScreen {
             // ── RECEIVE STATE ──────────────────────────
             GamePacket received = network.getLatestPacket();
             if (received != null) {
-                remoteX     = received.x;
-                remoteY     = received.y;
-                remoteAngle = received.angle;
-                remoteKills = received.kills;
+
+                // ── DETECT REMOTE hitCount RESET ───────
+                // If remote respawned their hitCount
+                // drops to 0 — reset our baseline too
+                // otherwise old hits re-apply after respawn
                 if (received.hitCount < lastSentHits) {
                     lastSentHits      = 0;
                     totalHitsReceived = 0;
                 }
 
                 remoteX     = received.x;
+                remoteY     = received.y;
+                remoteAngle = received.angle;
+                remoteKills = received.kills;
 
                 // ── APPLY INCOMING HITS ────────────────
                 // Only apply NEW hits not yet processed
-                if (received.hitCount > lastSentHits && player.alive) {
-                    int newHits = received.hitCount - lastSentHits;
-                    // Cap at 1 hit per packet to prevent burst damage
+                if (received.hitCount > lastSentHits
+                    && player.alive) {
+                    int newHits  = received.hitCount
+                        - lastSentHits;
+                    // Cap at 1 per packet — no burst damage
                     newHits           = Math.min(newHits, 1);
                     lastSentHits++;
                     totalHitsReceived = lastSentHits;
@@ -296,9 +318,6 @@ public class GameScreen {
                 if (prevHealth <= 0 && remoteHealth > 0) {
                     remoteAlive       = true;
                     pendingHits       = 0;
-                    // Don't reset lastSentHits here — remote
-                    // will start fresh with hitCount=0 on their end
-                    // We just need to accept their new baseline
                     lastSentHits      = 0;
                     totalHitsReceived = 0;
                 }
@@ -339,12 +358,12 @@ public class GameScreen {
 
     // ── RESPAWN ────────────────────────────────────────
     void respawnPlayer() {
-        player.health = 100;
-        player.alive  = true;
-        respawnTimer  = RESPAWN_TIME;
-        player.x      = spawnX;
-        player.y      = spawnY;
-        // Reset hit tracking on respawn
+        player.health     = 100;
+        player.alive      = true;
+        respawnTimer      = RESPAWN_TIME;
+        player.x          = spawnX;
+        player.y          = spawnY;
+        // Reset all hit tracking on respawn
         lastSentHits      = 0;
         totalHitsReceived = 0;
         pendingHits       = 0;
@@ -405,7 +424,6 @@ public class GameScreen {
         // ── TANKS + BULLETS ────────────────────────────
         batch.begin();
         if (player.alive) player.draw(batch);
-        // Bug 1 fix: guard null remoteTankTexture
         if (network != null && remoteAlive
             && remoteTankTexture != null)
             drawRemoteTank(batch);
