@@ -260,14 +260,20 @@ public class GameScreen {
                 remoteY     = received.y;
                 remoteAngle = received.angle;
                 remoteKills = received.kills;
+                if (received.hitCount < lastSentHits) {
+                    lastSentHits      = 0;
+                    totalHitsReceived = 0;
+                }
+
+                remoteX     = received.x;
 
                 // ── APPLY INCOMING HITS ────────────────
                 // Only apply NEW hits not yet processed
-                if (received.hitCount > lastSentHits
-                    && player.alive) {
-                    int newHits  = received.hitCount
-                        - lastSentHits;
-                    lastSentHits      = received.hitCount;
+                if (received.hitCount > lastSentHits && player.alive) {
+                    int newHits = received.hitCount - lastSentHits;
+                    // Cap at 1 hit per packet to prevent burst damage
+                    newHits           = Math.min(newHits, 1);
+                    lastSentHits++;
                     totalHitsReceived = lastSentHits;
                     player.health    -= BULLET_DAMAGE * newHits;
                     if (player.health <= 0) {
@@ -289,9 +295,12 @@ public class GameScreen {
                 // Detect remote respawn — reset tracking
                 if (prevHealth <= 0 && remoteHealth > 0) {
                     remoteAlive       = true;
+                    pendingHits       = 0;
+                    // Don't reset lastSentHits here — remote
+                    // will start fresh with hitCount=0 on their end
+                    // We just need to accept their new baseline
                     lastSentHits      = 0;
                     totalHitsReceived = 0;
-                    pendingHits       = 0;
                 }
 
                 remoteAlive = remoteHealth > 0;
@@ -335,6 +344,10 @@ public class GameScreen {
         respawnTimer  = RESPAWN_TIME;
         player.x      = spawnX;
         player.y      = spawnY;
+        // Reset hit tracking on respawn
+        lastSentHits      = 0;
+        totalHitsReceived = 0;
+        pendingHits       = 0;
     }
 
     // ── END MATCH ──────────────────────────────────────
